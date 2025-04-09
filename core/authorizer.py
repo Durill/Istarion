@@ -3,6 +3,7 @@ __all__ = ("Authorizer",)
 import base64
 import json
 import os
+from datetime import datetime, timezone, timedelta
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
@@ -15,12 +16,19 @@ from dotenv import load_dotenv
 
 
 class Authorizer:
+    def __init__(
+        self,
+        user_repository,
+    ) -> None:
+        self.user_repository = user_repository
+
     def verify_user(self, request: Request):
         headers = request.headers
+        # TODO: My idea for now is to hide under this header encrypted message with symmetric key(symm), login(subject) and password(pass) of user
         authorization_message = headers.get("authorization")
 
-        private_key, public_key = self._get_keys()
-        decoded_message = private_key.decrypt(
+        server_private_key, server_public_key = self._get_keys()
+        decoded_message = server_private_key.decrypt(
             ciphertext=authorization_message.encode('utf-8'),
             padding=padding.OAEP(
                 mgf=padding.MGF1(algorithm=hashes.SHA256()),
@@ -29,6 +37,26 @@ class Authorizer:
             ),
         )
         mapped_message = json.loads(decoded_message.decode()) # keys: sym, log, pass
+
+        if not self.user_repository.check_user_credentials(
+            login=mapped_message.get("subject"),
+            password=mapped_message.get("pass"),
+        ):
+            raise
+
+        symmetric_key = mapped_message.get("symm")
+        if not symmetric_key:
+            raise
+
+        # TODO: Now it's time to generate jwt token for user with his subject, some ttl of token and encrypt everything with agreed symmetric key
+        payload = {
+            "subject": mapped_message.get("subject"),
+            "token_ttl": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        }
+
+        # TODO: encrypt this data with symmetric key
+        # TODO: create jwt token from it and sign it with server private key
+        # TODO: return it to be send to user
 
     def _get_keys(self):
         return self._get_private_key(), self._get_public_key()
@@ -89,6 +117,8 @@ print(encrypted_b64.decode())
 print(enc)
 decoded_jwt = jwt.decode(jwt=enc, key=public_key, algorithms=["RS256"])
 print(decoded_jwt)
+print((datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
+print(datetime.now(timezone.utc).isoformat())
 
 ### FLOW
 
