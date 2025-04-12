@@ -5,6 +5,7 @@ import json
 import os
 from datetime import datetime, timezone, timedelta
 
+from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from websockets.http11 import Request
@@ -44,7 +45,7 @@ class Authorizer:
         ):
             raise
 
-        symmetric_key = mapped_message.get("symm")
+        symmetric_key = Fernet(mapped_message.get("symm"))
         if not symmetric_key:
             raise
 
@@ -53,10 +54,16 @@ class Authorizer:
             "subject": mapped_message.get("subject"),
             "token_ttl": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
         }
-
         # TODO: encrypt this data with symmetric key
+        encrypted_token_payload = symmetric_key.encrypt(json.dumps(payload).encode('utf-8'))
         # TODO: create jwt token from it and sign it with server private key
+        user_token = jwt.encode(
+            payload={"sp": str(base64.b64encode(encrypted_token_payload))},
+            key=server_private_key,
+            algorithm="RS256",
+        )
         # TODO: return it to be send to user
+        return user_token
 
     def _get_keys(self):
         return self._get_private_key(), self._get_public_key()
@@ -87,6 +94,7 @@ with open("/home/wb/Desktop/certs/public-key-24032025.pem", "rb") as key_file:
         key_file.read(),
     )
 
+# TODO: encrypt it with Fernet and save key for interactions with server
 message = {
     "sym": "aabb11cc99",
     "log": "admin",
