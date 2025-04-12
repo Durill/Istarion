@@ -10,16 +10,16 @@ from core import Authorizer
 class Engine:
     host: str = "localhost"
     port: int = 8765
-    authorizer: Authorizer = Authorizer()
     user_repository: UserRepository = UserRepository()
     chat_repository: ChatRepository = ChatRepository()
+    authorizer: Authorizer = Authorizer(user_repository=user_repository)
 
     async def start_server(self):
-        async with serve(self._traffic_handler, self.host, self.port) as server:
+        async with serve(self._traffic_handler, self.host, self.port) as server:  # noqa
             await server.serve_forever()
 
     async def _traffic_handler(self, websocket):
-        user = await self.authorizer.verify_user()
+        user = self.authorizer.verify_user(websocket.request)
 
         async for request in websocket:
             receiver = await self.user_repository.extract_receiver(raw_receiver=request["receiver"])

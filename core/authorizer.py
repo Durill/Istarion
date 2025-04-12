@@ -1,34 +1,49 @@
 __all__ = ("Authorizer",)
 
-import base64
 import json
-import os
 from datetime import datetime, timezone, timedelta
 
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric.types import PrivateKeyTypes, PublicKeyTypes
 from websockets.http11 import Request
 import jwt
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.serialization import load_der_public_key, load_pem_private_key, \
-    load_der_private_key, load_pem_public_key
-from dotenv import load_dotenv
+from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_pem_public_key
 
 
 class Authorizer:
+    __server_private_key: PrivateKeyTypes
+    __server_public_key: PublicKeyTypes
+    __algorithm: str = "RS256"
+    __server_private_key_destination: str
+    __server_public_key_destination: str
+
     def __init__(
         self,
         user_repository,
     ) -> None:
         self.user_repository = user_repository
+        self.__server_private_key_destination = "some/destination/for/private_key/maybe/even/environment_variable"
+        self.__server_public_key_destination = "some/destination/for/public_key/maybe/even/environment_variable"
+        self.__server_private_key = self._get_private_key()
+        self.__server_public_key = self._get_public_key()
 
-    def verify_user(self, request: Request):
+    def verify_user(self, request: Request) -> str:
+        """
+        Idea for now (12.04.2025) is to hide under Authorization header encrypted message with
+        symmetric key (symm) and encrypted with that key payload (payload) that consist user
+        login (login) and hashed password (pass).
+
+        Authenticate user and return him JWT token with his encrypted subject and token_ttl.
+        User then have to present this token to the server each time making request.
+        :param request: WebSocket handshake request
+        :return: JWT token as string
+        """
         headers = request.headers
-        # TODO: My idea for now is to hide under this header encrypted message with symmetric key(symm), login(subject) and password(pass) of user
         authorization_message = headers.get("authorization")
 
-        server_private_key, server_public_key = self._get_keys()
+        server_private_key = self._get_private_key()
         decoded_message = server_private_key.decrypt(
             ciphertext=authorization_message.encode('utf-8'),
             padding=padding.OAEP(
@@ -37,39 +52,36 @@ class Authorizer:
                 label=None
             ),
         )
-        mapped_message = json.loads(decoded_message.decode()) # keys: sym, log, pass
-
-        if not self.user_repository.check_user_credentials(
-            login=mapped_message.get("subject"),
-            password=mapped_message.get("pass"),
-        ):
-            raise
-
-        symmetric_key = Fernet(mapped_message.get("symm"))
+        mapped_message = json.loads(decoded_message.decode()) # keys: sym, payload
+        symmetric_key = self._retrieve_symmetric_key(mapped_message=mapped_message)
         if not symmetric_key:
             raise
 
-        # TODO: Now it's time to generate jwt token for user with his subject, some ttl of token and encrypt everything with agreed symmetric key
-        payload = {
+        payload = self._retrieve_payload(
+            mapped_message=mapped_message,
+            symmetric_key=symmetric_key,
+        )
+
+        if not self.user_repository.check_user_credentials(
+            login=payload.get("login"),
+            password=payload.get("pass"),
+        ):
+            raise
+
+        jwt_payload = {
             "subject": mapped_message.get("subject"),
             "token_ttl": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
         }
-        # TODO: encrypt this data with symmetric key
-        encrypted_token_payload = symmetric_key.encrypt(json.dumps(payload).encode('utf-8'))
-        # TODO: create jwt token from it and sign it with server private key
-        user_token = jwt.encode(
-            payload={"sp": str(base64.b64encode(encrypted_token_payload))},
-            key=server_private_key,
-            algorithm="RS256",
-        )
-        # TODO: return it to be send to user
-        return user_token
 
-    def _get_keys(self):
-        return self._get_private_key(), self._get_public_key()
+        user_jwt = self._prepare_user_jwt(
+            payload=jwt_payload,
+            symmetric_key=symmetric_key,
+        )
+
+        return user_jwt
 
     def _get_private_key(self):
-        with open("/home/wb/Desktop/certs/private-key-24032025.pem", "rb") as key_file:
+        with open(self.__server_private_key_destination, "rb") as key_file:
             private_key = load_pem_private_key(
                 key_file.read(),
                 password=None,
@@ -77,70 +89,33 @@ class Authorizer:
         return private_key
 
     def _get_public_key(self):
-        with open("/home/wb/Desktop/certs/public-key-24032025.pem", "rb") as key_file:
+        with open(self.__server_public_key_destination, "rb") as key_file:
             public_key = load_pem_public_key(
                 key_file.read(),
             )
         return public_key
 
-with open("/home/wb/Desktop/certs/private-key-24032025.pem", "rb") as key_file:
-    private_key = load_pem_private_key(
-        key_file.read(),
-        password=None,
-    )
+    def _retrieve_symmetric_key(self, mapped_message: dict) -> bytes:
+        raw_key = mapped_message.get('symm')
+        b_key = raw_key.encode('utf-8')
 
-with open("/home/wb/Desktop/certs/public-key-24032025.pem", "rb") as key_file:
-    public_key = load_pem_public_key(
-        key_file.read(),
-    )
+        return b_key
 
-# TODO: encrypt it with Fernet and save key for interactions with server
-message = {
-    "sym": "aabb11cc99",
-    "log": "admin",
-    "pass": "aksjhd1098eru1ksajkcOAhjd-iqw"
-}
-message = json.dumps(message).encode('utf-8')
-encrypted_message = public_key.encrypt(
-    plaintext=message,
-    padding=padding.OAEP(
-        mgf=padding.MGF1(algorithm=hashes.SHA256()),
-        algorithm=hashes.SHA256(),
-        label=None
-    ),
-)
-print(private_key)
-decoded_message = private_key.decrypt(
-    ciphertext=encrypted_message,
-    padding=padding.OAEP(
-        mgf=padding.MGF1(algorithm=hashes.SHA256()),
-        algorithm=hashes.SHA256(),
-        label=None
-    ),
-)
-print(json.loads(decoded_message.decode()))
-encrypted_b64 = base64.b64encode(encrypted_message)
-enc = jwt.encode(payload={"ss": str(encrypted_b64)}, key=private_key, algorithm="RS256")
-print(encrypted_b64.decode())
-print(enc)
-decoded_jwt = jwt.decode(jwt=enc, key=public_key, algorithms=["RS256"])
-print(decoded_jwt)
-print((datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
-print(datetime.now(timezone.utc).isoformat())
+    def _retrieve_payload(self, mapped_message: dict, symmetric_key: bytes) -> dict:
+        encrypted_payload = mapped_message.get('payload')
+        b_encrypted_payload = encrypted_payload.encode('utf-8')
+        raw_payload = Fernet(key=symmetric_key).decrypt(b_encrypted_payload)
+        payload = json.loads(raw_payload.decode('utf-8'))
 
-### FLOW
+        return payload
 
-### Know How
-# 1. public key for encrypting message need to be first sanitized from Header and Footer
-#    and then decoded to bytes by Base64 decoder
-# 2. Then that data needs to be passed to cryptography method to retrieve public key `load_der_public_key()`
-# 3. To jwt.encode() pass not-sanitized private key
+    def _prepare_user_jwt(self, payload: dict, symmetric_key: bytes) -> str:
+        b_payload = json.dumps(payload).encode('utf-8')
+        encrypted_payload = Fernet(key=symmetric_key).encrypt(b_payload)
+        user_jwt = jwt.encode(
+            payload={"ep": encrypted_payload},
+            key=self.__server_private_key,
+            algorithm=self.__algorithm,
+        )
 
-# I did not figured out why password is needed to load rsa private key or maybe data format is wrong
-
-# PEM (Privacy-Enhanced Mail) - file format for storing and sending cryptographic keys, certificates, and other data.
-#                               Take key with headers but typed as bytes
-# DER (Distinguished Encoding Rules) - is a binary format for cryptographic keys and certificates.
-#                                      Unlike PEM, it does not contain headers or Base64 encoding—it is purely a
-#                                      raw binary representation of the key.
-
+        return user_jwt
