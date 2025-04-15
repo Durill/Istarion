@@ -5,6 +5,7 @@ from datetime import datetime
 from websockets.asyncio.server import serve
 
 from core import Authorizer
+from settings import app_settings
 
 
 class Engine:
@@ -12,7 +13,7 @@ class Engine:
     port: int = 8765
     user_repository: UserRepository = UserRepository()
     chat_repository: ChatRepository = ChatRepository()
-    authorizer: Authorizer = Authorizer(user_repository=user_repository)
+    authorizer: Authorizer = Authorizer(user_repository=user_repository, settings=app_settings)
 
     async def start_server(self):
         async with serve(self._traffic_handler, self.host, self.port) as server:  # noqa

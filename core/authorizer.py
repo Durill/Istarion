@@ -11,6 +11,8 @@ from websockets.http11 import Request
 import jwt
 from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_pem_public_key
 
+from settings import Settings
+
 
 class Authorizer:
     __server_private_key: PrivateKeyTypes
@@ -22,10 +24,11 @@ class Authorizer:
     def __init__(
         self,
         user_repository,
+        settings: Settings,
     ) -> None:
         self.user_repository = user_repository
-        self.__server_private_key_destination = "some/destination/for/private_key/maybe/even/environment_variable"
-        self.__server_public_key_destination = "some/destination/for/public_key/maybe/even/environment_variable"
+        self.__server_private_key_destination = settings.server_private_key_destination
+        self.__server_public_key_destination = settings.server_public_key_destination
         self.__server_private_key = self._get_private_key()
         self.__server_public_key = self._get_public_key()
 
