@@ -4,6 +4,9 @@ from user import IUserInterface
 
 
 class UserRedisRepository(IUserInterface):
+    """
+    Just to aquire commiting power!
+    """
 
     def get_user(self, login: str):
         pass
