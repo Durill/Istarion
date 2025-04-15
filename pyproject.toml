@@ -8,6 +8,8 @@ license = "MIT License"
 [tool.poetry.dependencies]
 python = "^3.12"
 websockets = "15.0"
+pydantic = "^2.11"
+pydantic-settings = "^2.8"
 
 [tool.poetry.dev-dependencies]
 
